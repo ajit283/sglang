@@ -28,7 +28,6 @@ from sglang.srt.utils.flatten import (
     NestedRowColumns,
     RaggedPairColumns,
 )
-from sglang.srt.utils.hf_transformers.common import _resolve_local_or_cached_file
 from sglang.version import __version__
 
 if TYPE_CHECKING:
@@ -351,20 +350,6 @@ class RustServer:
             scheduler.server_args
         )
         server_args["max_total_num_tokens"] = scheduler.max_total_num_tokens
-
-        # Rust hf-hub uses $HF_HOME/hub and ignores HUGGINGFACE_HUB_CACHE, so a
-        # repo-id tokenizer_path can miss the snapshot Python already populated.
-        # Resolve with huggingface_hub into a SEPARATE field: `tokenizer_path`
-        # must stay the configured value because the rust `/model_info` reports
-        # it verbatim and clients feed it back to `get_tokenizer` (a resolved
-        # local path breaks parity with the Python server there).
-        if not scheduler.server_args.skip_tokenizer_init:
-            path = server_args["tokenizer_path"] or server_args["model_path"]
-            if path and not os.path.exists(path):
-                tok_file = _resolve_local_or_cached_file(
-                    path, "tokenizer.json", server_args.get("revision")
-                )
-                server_args["resolved_tokenizer_path"] = os.path.dirname(tok_file)
 
         return msgspec.json.encode(server_args, enc_hook=str).decode("utf-8")
 

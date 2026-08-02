@@ -149,19 +149,12 @@ pub fn start(cfg: RuntimeConfig) -> Result<Runtime, String> {
 
     // The same instance is shared by the tokenizer pool (encode) and the detok
     // shards (decode); `None` only under `skip_tokenizer_init`.
-    // Load from the launcher-resolved local dir when present; `tokenizer_path`
-    // itself stays the user-facing value (`/model_info` reports it verbatim).
-    let tokenizer_source = cfg
-        .server_args
-        .resolved_tokenizer_path
-        .as_deref()
-        .filter(|p| !p.is_empty())
-        .unwrap_or(&cfg.server_args.tokenizer_path);
     let dyn_tokenizer = tokenizer::load_tokenizer(
         // Empty only in minimal standalone blobs (the Python dump always
         // resolves it); empty → no tokenizer, allowed only under
         // `skip_tokenizer_init`.
-        (!tokenizer_source.is_empty()).then_some(tokenizer_source),
+        (!cfg.server_args.tokenizer_path.is_empty()).then_some(&*cfg.server_args.tokenizer_path),
+        cfg.server_args.revision.as_deref(),
         skip_tokenizer_init,
     )?;
 

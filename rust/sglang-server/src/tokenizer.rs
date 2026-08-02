@@ -28,10 +28,11 @@ pub trait TextTokenizer: Send + Sync {
 
 /// Load the tokenizer shared (Arc-backed) by the encode pool and detok shards.
 /// `None` under `skip_tokenizer_init`, else required (missing/failed load → `Err`).
-/// `tokenizer_path` is a local tokenizer file or model dir (repo ids are
-/// resolved by the Python launcher — no hub lookup here).
+/// `tokenizer_path` is a tokenizer file, a model dir, or an HF Hub repo id
+/// (resolved from the local cache — no network).
 pub fn load_tokenizer(
     tokenizer_path: Option<&str>,
+    revision: Option<&str>,
     skip_tokenizer_init: bool,
 ) -> Result<Option<dynamo_tokenizers::Tokenizer>, String> {
     if skip_tokenizer_init {
@@ -42,7 +43,7 @@ pub fn load_tokenizer(
         "no tokenizer configured: set tokenizer_path or enable skip_tokenizer_init".to_string()
     })?;
 
-    let file = resolve_model_file(path, "tokenizer.json")
+    let file = resolve_model_file(path, revision, "tokenizer.json")
         .ok_or_else(|| format!("tokenizer.json not found for '{path}'"))?;
     let tokenizer = dynamo_tokenizers::Tokenizer::from_file_with_options(
         &file,
@@ -56,9 +57,8 @@ pub fn load_tokenizer(
 }
 
 /// Resolve a model file from the tokenizer source: a dir → `dir/<file>`, a file →
-/// its sibling. `None` if not found (repo ids must be resolved by the caller —
-/// a hub resolver here would drift from `huggingface_hub`'s cache conventions).
-pub fn resolve_model_file(path: &str, filename: &str) -> Option<String> {
+/// its sibling, else an HF Hub repo id → the local cache. `None` if not found.
+pub fn resolve_model_file(path: &str, revision: Option<&str>, filename: &str) -> Option<String> {
     let p = Path::new(path);
     if p.is_dir() {
         let f = p.join(filename);
@@ -69,7 +69,29 @@ pub fn resolve_model_file(path: &str, filename: &str) -> Option<String> {
         let f = p.parent()?.join(filename);
         return f.is_file().then(|| f.to_string_lossy().into_owned());
     }
-    None
+    // Not a local path → HF Hub repo id (offline cache lookup).
+    resolve_from_hub_cache(path, revision, filename)
+}
+
+/// Locate a file for an HF Hub repo id in the local cache. Offline —
+/// the scheduler pre-downloads the model, and `local_files_only` never makes
+/// a network request. `None` if not cached.
+///
+/// hf-hub ≥1.0 resolves the cache dir exactly like Python `huggingface_hub`
+/// (`HF_HUB_CACHE`, then `HUGGINGFACE_HUB_CACHE`, then `$HF_HOME/hub`), so
+/// this finds the snapshot Python already downloaded.
+fn resolve_from_hub_cache(repo_id: &str, revision: Option<&str>, filename: &str) -> Option<String> {
+    let client = hf_hub::HFClientSync::new().ok()?;
+    let (owner, name) = hf_hub::split_id(repo_id);
+    client
+        .model(owner, name)
+        .download_file()
+        .filename(filename)
+        .maybe_revision(revision.map(str::to_string))
+        .local_files_only(true)
+        .send()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Real tokenizer over an already-loaded dynamo `Tokenizer` (Arc inside).

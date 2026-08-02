@@ -65,20 +65,11 @@ pub struct ServerArgs {
     /// Model name reported by `/v1/models` and `/server_info`.
     #[serde(default)]
     pub served_model_name: String,
-    /// Tokenizer source exactly as configured (repo id, local model dir, or
-    /// `tokenizer.json`) — reported verbatim by `/model_info` / `/server_info`
-    /// so clients (e.g. `bench_serving`) see the same value the Python server
-    /// reports. Empty only in minimal standalone blobs — then boot requires
-    /// `skip_tokenizer_init`. Loading prefers [`Self::resolved_tokenizer_path`].
+    /// Tokenizer source (model dir / `tokenizer.json` / HF repo id). Empty only
+    /// in minimal standalone blobs — then boot requires `skip_tokenizer_init`.
     #[serde(default)]
     pub tokenizer_path: String,
-    /// Local dir the Python launcher resolved a repo-id `tokenizer_path` to
-    /// (via `huggingface_hub`, cache-only). Used only to load the tokenizer;
-    /// never reported — `tokenizer_path` keeps the user-facing value.
-    #[serde(default)]
-    pub resolved_tokenizer_path: Option<String>,
-    /// HF revision (kept for server_args parity; tokenizer path is pre-resolved).
-    #[allow(dead_code)]
+    /// HF revision, used only when `tokenizer_path` is a repo id. `None` → main.
     #[serde(default)]
     pub revision: Option<String>,
     /// HTTP bind address (see [`Self::bind`]).

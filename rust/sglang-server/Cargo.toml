@@ -36,6 +36,12 @@ core_affinity = "0.8"
 dynamo-tokenizers = "1.7.0"
 flume = "0.12.0"
 itertools = "0.14"
+# ≥1.0 required: earlier versions resolve the cache dir from $HF_HOME only,
+# ignoring HF_HUB_CACHE/HUGGINGFACE_HUB_CACHE, and so disagree with Python
+# `huggingface_hub` about where a snapshot lives. (dynamo-tokenizers still
+# pins hf-hub 0.4 internally; the two coexist.) `blocking` provides
+# HFClientSync for the synchronous cache lookup in `tokenizer.rs`.
+hf-hub = { version = "1.0", features = ["blocking"] }
 rmp-serde = "1"
 rmpv = { version = "1", features = ["with-serde"] }
 # Pinned EXACTLY: this crate's accepted grammar defines the
