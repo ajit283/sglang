@@ -73,13 +73,10 @@ pub fn resolve_model_file(path: &str, revision: Option<&str>, filename: &str) ->
     resolve_from_hub_cache(path, revision, filename)
 }
 
-/// Locate a file for an HF Hub repo id in the local cache. Offline —
-/// the scheduler pre-downloads the model, and `local_files_only` never makes
-/// a network request. `None` if not cached.
-///
-/// hf-hub ≥1.0 resolves the cache dir exactly like Python `huggingface_hub`
-/// (`HF_HUB_CACHE`, then `HUGGINGFACE_HUB_CACHE`, then `$HF_HOME/hub`), so
-/// this finds the snapshot Python already downloaded.
+/// Locate a file for an HF Hub repo id in the local cache. Offline — the
+/// scheduler pre-downloads the model; `local_files_only` never hits the network.
+/// hf-hub ≥1.0 resolves the cache dir like Python `huggingface_hub`, so this
+/// finds the snapshot Python downloaded. `None` if not cached.
 fn resolve_from_hub_cache(repo_id: &str, revision: Option<&str>, filename: &str) -> Option<String> {
     let client = hf_hub::HFClientSync::new().ok()?;
     let (owner, name) = hf_hub::split_id(repo_id);
