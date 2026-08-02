@@ -105,9 +105,13 @@ def build_draft_tp_worker(
     )
     # Post-resolution ServerArgs rejects bare assignment; route the draft-copy
     # adjustments through the audited mutation point.
+    draft_overrides = draft_server_args_overrides(target_model_config, draft_backend)
+    draft_kv_cache_dtype = draft_server_args.speculative_draft_kv_cache_dtype
+    if draft_kv_cache_dtype is not None:
+        draft_overrides["kv_cache_dtype"] = draft_kv_cache_dtype
     draft_server_args.override(
         "draft_worker.build",
-        **draft_server_args_overrides(target_model_config, draft_backend),
+        **draft_overrides,
     )
 
     # The draft's layers must resolve config from the draft's own bags.
