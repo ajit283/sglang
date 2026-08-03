@@ -209,6 +209,14 @@ setup_pip_toolchain() {
     fi
 
     export UV_LINK_MODE=copy
+    # uv holds the editable sdist lock in the shared ~/.cache/uv for the whole
+    # build, cargo included, and every CUDA job builds the same path so they all
+    # contend on one lock. A cold Rust build already exceeds uv's 300s default,
+    # which fails concurrent jobs on the same host outright. Stay well under the
+    # 20-minute install-step cap so uv reports the lock timeout itself instead of
+    # the step being killed; a job that does wait gets a cache warmed by the
+    # holder, so its own build is short.
+    export UV_LOCK_TIMEOUT=600
     PIP_CMD="uv pip"
     PIP_INSTALL_SUFFIX="--index-strategy unsafe-best-match"
     PIP_UNINSTALL_CMD="uv pip uninstall"
