@@ -283,6 +283,24 @@ uninstall_stale_flashinfer() {
 }
 
 install_sglang() {
+    # A stage that downloaded prebuilt extension modules sets
+    # SGLANG_BUILD_RUST_EXTS=none so this install skips cargo. Fail loudly if
+    # the artifact did not land: building without the extensions succeeds, but
+    # leaves is_rust_server_built() false, which silently skips the Rust-server
+    # test classes instead of reporting a problem.
+    if [ "${SGLANG_BUILD_RUST_EXTS:-}" = "none" ]; then
+        local missing=()
+        local pkg
+        for pkg in server grpc multimodal; do
+            compgen -G "python/sglang/srt/${pkg}/_core*.so" >/dev/null || missing+=("${pkg}")
+        done
+        if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::SGLANG_BUILD_RUST_EXTS=none but no prebuilt extension module found for: ${missing[*]}"
+            exit 1
+        fi
+        echo "Using prebuilt Rust extension modules; skipping the cargo build."
+    fi
+
     EXTRAS="dev,runai,tracing"
     if [ -n "$OPTIONAL_DEPS" ]; then
         EXTRAS="dev,runai,tracing,${OPTIONAL_DEPS}"

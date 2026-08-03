@@ -208,6 +208,28 @@ jobs:
       skip_pr_test_health_check: ${{ inputs.skip_pr_test_health_check == true }}
     secrets: inherit
 
+  # =============================================== Rust extensions ====================================================
+
+  # Compile the PyO3 extension modules once and hand them to the CUDA stages as
+  # an artifact. Unlike sgl-kernel this is not gated on the sources changing:
+  # the extensions ship inside the sglang wheel and have no published build to
+  # fall back on, so every run needs a fresh one. Stages fall back to compiling
+  # during install whenever this job did not succeed.
+  rust-ext-build:
+    needs: [check-changes, call-gate]
+    # Skip for scheduled runs (they run stages independently).
+    if: |
+      github.event_name != 'schedule' &&
+      inputs.test_parallel_dispatch != true &&
+      needs.check-changes.result == 'success' &&
+      (needs.call-gate.result == 'success' || needs.call-gate.result == 'skipped')
+    uses: ./.github/workflows/_pr-test-rust-ext-build.yml
+    with:
+      runs_on: x64-kernel-build-node
+      git_ref: ${{ inputs.git_ref || '' }}
+      skip_pr_test_health_check: ${{ inputs.skip_pr_test_health_check == true }}
+    secrets: inherit
+
   call-sgl-kernel-tests:
     needs: [check-changes, call-gate, sgl-kernel-build-wheels]
     if: |
@@ -252,7 +274,7 @@ jobs:
 
   # Runs on 5090 (32GB, SM120)
   base-a-test-1-gpu-small:
-    needs: [check-changes, call-gate, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -262,6 +284,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '10'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-a-test-cpu:
@@ -357,7 +380,7 @@ jobs:
 
   # Runs on 5090 (32GB, SM120)
   base-b-test-1-gpu-small:
-    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -367,11 +390,12 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   # Runs on H100 (80GB, SM90) - tests that don't pass on 5090 (FA3, FP8, high VRAM, etc.)
   base-b-test-1-gpu-large:
-    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -382,10 +406,11 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-b-test-2-gpu-large:
-    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -395,10 +420,11 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-b-test-4-gpu-b200:
-    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-a, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -408,6 +434,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '40'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   call-multimodal-gen-tests:
@@ -431,7 +458,7 @@ jobs:
     secrets: inherit
 
   base-c-test-4-gpu-h100:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -441,10 +468,11 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-8-gpu-h200:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -461,10 +489,11 @@ jobs:
       # Server CUDA Graph warmup is combined into this step (warmup_server_models unset).
       warmup_deep_gemm_models: 'deepseek-ai/DeepSeek-V3-0324:8 deepseek-ai/DeepSeek-V3.2:8 zai-org/GLM-5-FP8:8 XiaomiMiMo/MiMo-V2-Flash:4 XiaomiMiMo/MiMo-V2.5:8'
       warmup_timeout_minutes: '60'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-8-gpu-h20:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -474,10 +503,11 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-deepep-4-gpu-h100:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -489,10 +519,11 @@ jobs:
       run_timeout_minutes: '30'
       warmup_deep_gemm_models: 'lmsys/sglang-ci-dsv3-test:4'
       warmup_server_models: 'lmsys/sglang-ci-dsv3-test:4'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-deepep-4-gpu-b200:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -503,10 +534,11 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-deepep-8-gpu-h200:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -517,10 +549,11 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-4-gpu-b200:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -531,10 +564,11 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
+      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
     secrets: inherit
 
   base-c-test-4-gpu-gb300:
-    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels]
+    needs: [check-changes, call-gate, wait-for-base-b, sgl-kernel-build-wheels, rust-ext-build]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_pr-test-stage.yml
     with:
@@ -545,6 +579,9 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
+      # aarch64: no prebuilt artifact, so this stage still compiles the
+      # extensions during install.
+      rust_ext_artifact: ''
     secrets: inherit
 
   pr-test-finish:

@@ -1,0 +1,134 @@
+name: PR Test - Build Rust Extensions
+
+# Reusable workflow that compiles the PyO3 extension modules from the rust/
+# cargo workspace once per run and publishes them as an artifact, so the CUDA
+# test stages can install sglang with SGLANG_BUILD_RUST_EXTS=none instead of
+# each one rebuilding the whole workspace.
+#
+# Why this exists: uv holds the editable sdist lock in the shared ~/.cache/uv
+# for the entire build, cargo included, and every CUDA job builds the same path
+# so they all contend on one lock. Once the Rust build grew past a few minutes,
+# jobs sharing a host serialized on that lock and the ones at the back of the
+# queue hit uv's lock timeout and failed.
+#
+# Unlike sgl-kernel, these extensions have no published wheel to fall back on
+# (they ship inside the sglang wheel), so this job runs on every CI run rather
+# than only when rust/ changed.
+
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: 'Runner label. Must be self-hosted: the artifact is consumed by jammy test runners, so glibc must be no newer than theirs, and a persistent ~/.cache is what lets the cargo build cache survive between runs.'
+        type: string
+        required: true
+      artifact_name:
+        description: 'upload-artifact name. Test stages download by this exact name.'
+        type: string
+        default: rust-ext-x86_64
+      max_glibc:
+        description: 'Highest GLIBC symbol version the built .so files may require. Test runners are Ubuntu 22.04 (jammy, glibc 2.35).'
+        type: string
+        default: '2.35'
+      git_ref:
+        type: string
+        default: ''
+      skip_pr_test_health_check:
+        description: 'Forwarded from the caller so the check-maintenance action sees the same env as other jobs.'
+        type: boolean
+        default: false
+
+# Reusable workflows do not inherit the caller's workflow-level env, so mirror
+# what the check-maintenance action reads.
+env:
+  SGLANG_IS_IN_CI: true
+  SKIP_PR_TEST_HEALTH_CHECK: ${{ inputs.skip_pr_test_health_check && 'true' || 'false' }}
+  PR_TEST_BYPASS_MAINTENANCE_ON_MAIN: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 60
+    name: Build Rust Ext
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref || github.sha }}
+
+      - uses: ./.github/actions/check-maintenance
+
+      # Only the extension ABI tag has to match the test runners, so pin the
+      # same minor version they run rather than whatever the image ships.
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install protoc and Rust toolchain
+        run: bash scripts/ci/utils/install_rust_protoc.sh
+
+      - name: Build extension modules
+        run: |
+          set -euxo pipefail
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:${PATH}"
+          # Same path ci_install_dependency.sh uses, so a host that also runs
+          # test stages keeps one warm cargo cache for both.
+          export CARGO_TARGET_DIR="${HOME}/.cache/sglang-cargo-target"
+          python3 -m pip install --upgrade pip
+          command -v uv >/dev/null 2>&1 || pip install uv
+          # build_rust needs only the build backend, not sglang's ~294 runtime
+          # dependencies.
+          uv venv /tmp/rust-ext-build --python python3.10 --seed
+          # shellcheck disable=SC1091
+          source /tmp/rust-ext-build/bin/activate
+          uv pip install "setuptools>=61.0" "setuptools-rust>=1.10" "setuptools-scm>=8.0" wheel
+          cd python
+          SGLANG_BUILD_RUST_EXTS=all python setup.py build_rust --inplace
+
+      - name: Stage artifacts and verify glibc floor
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Copy into a fixed layout instead of uploading the source paths
+          # directly: upload-artifact strips the longest common prefix of what
+          # it matched, so a missing crate would silently change the archive
+          # layout and unpack the .so files to the wrong place.
+          rm -rf rust-ext-staging
+          for pkg in server grpc multimodal; do
+              found=(python/sglang/srt/"${pkg}"/_core*.so)
+              if [ ${#found[@]} -ne 1 ]; then
+                  echo "::error::expected exactly one built extension for ${pkg}, found ${#found[@]}"
+                  exit 1
+              fi
+              mkdir -p "rust-ext-staging/${pkg}"
+              cp "${found[0]}" "rust-ext-staging/${pkg}/"
+          done
+          built=(rust-ext-staging/*/_core*.so)
+          # A .so built against a newer glibc than the test runners fails at
+          # import with "GLIBC_2.xx not found", which would surface as an
+          # unrelated-looking test error. Catch it here instead.
+          max_allowed="${{ inputs.max_glibc }}"
+          status=0
+          for so in "${built[@]}"; do
+              needed=$(objdump -T "$so" \
+                  | grep -oE 'GLIBC_2\.[0-9]+' \
+                  | sed 's/GLIBC_//' \
+                  | sort -V | tail -1)
+              echo "${so}: requires glibc <= ${needed:-none}"
+              if [ -n "${needed}" ] \
+                 && [ "$(printf '%s\n%s\n' "${max_allowed}" "${needed}" | sort -V | tail -1)" != "${max_allowed}" ]; then
+                  echo "::error::${so} requires glibc ${needed} > ${max_allowed} supported by the test runners; build on an older image"
+                  status=1
+              fi
+          done
+          exit $status
+
+      - name: Upload extension modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          # Archive holds <pkg>/_core*.so, so it unpacks straight into
+          # python/sglang/srt/ on the consuming stage.
+          path: rust-ext-staging/
+          if-no-files-found: error
+          retention-days: 1
