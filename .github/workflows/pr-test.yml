@@ -210,11 +210,9 @@ jobs:
 
   # =============================================== Rust extensions ====================================================
 
-  # Make the PyO3 extension modules available to the CUDA stages so none of them
-  # compiles the cargo workspace during install. The job runs every time but
-  # only actually compiles when the hash of rust/ + setup.py misses its cache,
-  # so a PR that leaves those alone reuses what main already built. Stages fall
-  # back to compiling during install whenever this job did not succeed.
+  # Unlike sgl-kernel this is not gated on its sources changing: the cache key is
+  # the source hash, so the job runs every time but only compiles on a miss.
+  # Stages fall back to compiling during install if it did not succeed.
   rust-ext-build:
     needs: [check-changes, call-gate]
     # Skip for scheduled runs (they run stages independently).

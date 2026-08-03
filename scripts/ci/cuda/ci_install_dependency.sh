@@ -283,9 +283,8 @@ uninstall_stale_flashinfer() {
 }
 
 install_sglang() {
-    # A stage that downloaded prebuilt extension modules sets
-    # SGLANG_BUILD_RUST_EXTS=none so this install skips cargo. Fail loudly if
-    # the artifact did not land: building without the extensions succeeds, but
+    # Stages that restored prebuilt extension modules set this to none. Fail
+    # loudly if they are not actually there: building without them succeeds but
     # leaves is_rust_server_built() false, which silently skips the Rust-server
     # test classes instead of reporting a problem.
     if [ "${SGLANG_BUILD_RUST_EXTS:-}" = "none" ]; then

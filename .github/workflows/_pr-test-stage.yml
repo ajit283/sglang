@@ -124,13 +124,10 @@ jobs:
           merge-multiple: true
           pattern: wheel-python3.10-cuda*
 
-      # Prebuilt PyO3 extension modules, so the install below can skip cargo.
-      # Restores to python/sglang/srt/<pkg>/_core*.so; srt/server/ is created
-      # here because it exists only as build output, never in the tree. The
-      # build job already succeeded for the key to be non-empty, so a miss means
-      # something is wrong with the cache rather than with this stage - fail
-      # instead of quietly recompiling and re-entering the lock contention this
-      # whole mechanism exists to avoid.
+      # srt/server/ is created here: it exists only as build output, never in the
+      # tree. A non-empty key means the build job succeeded, so a miss is a cache
+      # problem, not this stage's - fail rather than quietly recompile and walk
+      # back into the lock contention this mechanism exists to avoid.
       - name: Restore prebuilt Rust extensions
         if: ${{ inputs.rust_ext_cache_key != '' }}
         uses: actions/cache/restore@v4
