@@ -179,19 +179,17 @@ clean_site_packages() {
 }
 
 setup_cargo_cache() {
-    # Keep the cargo build cache outside the checkout. actions/checkout runs
-    # `git clean -ffdx`, which deletes the gitignored in-repo rust/target, so
-    # every job recompiles the whole workspace dependency graph from scratch
-    # inside install_sglang. setuptools-rust has no target-dir option of its own
-    # and defers to CARGO_TARGET_DIR, which uv passes through to the build
-    # backend, so setting it here is enough.
+    # actions/checkout runs `git clean -ffdx`, which deletes the gitignored
+    # in-repo rust/target, so every job recompiles the whole workspace
+    # dependency graph from scratch inside install_sglang. setuptools-rust has
+    # no target-dir option of its own and defers to CARGO_TARGET_DIR, which uv
+    # passes through to the build backend.
     export CARGO_TARGET_DIR="${HOME}/.cache/sglang-cargo-target"
     mkdir -p "${CARGO_TARGET_DIR}"
 
-    # Same disk-pressure guard as the uv cache in ci_cleanup_venv.sh: nothing
-    # else evicts this dir, and an unbounded cache already filled a runner disk
-    # once, failing jobs with ENOSPC. cargo has no partial-prune command, so
-    # drop the whole tree and pay one cold build instead.
+    # Same disk-pressure guard as the uv cache in ci_cleanup_venv.sh, which
+    # carries the ENOSPC story. cargo has no partial-prune command, so drop the
+    # whole tree and pay one cold build rather than pruning.
     local used
     used="$(df --output=pcent "${CARGO_TARGET_DIR}" 2>/dev/null | tr -dc '0-9')"
     if [ "${used:-0}" -ge 85 ]; then
