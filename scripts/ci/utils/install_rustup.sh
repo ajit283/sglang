@@ -125,5 +125,17 @@ fi
 
 install_workspace_pinned_toolchain
 
+# Select the pin as the default toolchain. A runner image that already ships a
+# usable rustc takes the "rust already installed" path above, which leaves the
+# image's own (possibly older) toolchain as the default, and setuptools-rust
+# runs cargo from python/ where the rust-toolchain.toml pin does not apply. An
+# image older than the pin then fails to build crates that require it.
+# Best-effort, matching install_workspace_pinned_toolchain: the version printed
+# below is what the build will actually use.
+if command -v rustup >/dev/null 2>&1; then
+    rustup default "${DEFAULT_CHANNEL}" \
+        || echo "WARNING: could not select ${DEFAULT_CHANNEL} as the default toolchain"
+fi
+
 rustc --version
 cargo --version
