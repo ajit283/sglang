@@ -54,8 +54,8 @@ on:
         description: 'pytest path to run after the suite (b200 FA4 jit_kernel tests). Empty skips.'
         type: string
         default: ''
-      rust_ext_artifact:
-        description: 'Name of the prebuilt Rust extension artifact to download. Empty (the default) means this stage compiles the extensions during install, which is the correct fallback when the build job was skipped or when no artifact exists for the arch.'
+      rust_ext_cache_key:
+        description: 'Cache key of the prebuilt Rust extension modules, from the rust-ext-build job output. Empty (the default) means this stage compiles them during install, which is the correct fallback when that job was skipped or when nothing is built for the arch.'
         type: string
         default: ''
 
@@ -125,29 +125,30 @@ jobs:
           pattern: wheel-python3.10-cuda*
 
       # Prebuilt PyO3 extension modules, so the install below can skip cargo.
-      # Unpacks into python/sglang/srt/<pkg>/_core*.so; srt/server/ is created
-      # by this step because it exists only as build output, never in the tree.
-      - name: Download Rust extensions (v4)
-        if: ${{ inputs.rust_ext_artifact != '' && steps.rc.outputs.artifact_version == 'v4' }}
-        uses: actions/download-artifact@v4
+      # Restores to python/sglang/srt/<pkg>/_core*.so; srt/server/ is created
+      # here because it exists only as build output, never in the tree. The
+      # build job already succeeded for the key to be non-empty, so a miss means
+      # something is wrong with the cache rather than with this stage - fail
+      # instead of quietly recompiling and re-entering the lock contention this
+      # whole mechanism exists to avoid.
+      - name: Restore prebuilt Rust extensions
+        if: ${{ inputs.rust_ext_cache_key != '' }}
+        uses: actions/cache/restore@v4
         with:
-          name: ${{ inputs.rust_ext_artifact }}
-          path: python/sglang/srt/
-
-      - name: Download Rust extensions (v6)
-        if: ${{ inputs.rust_ext_artifact != '' && steps.rc.outputs.artifact_version == 'v6' }}
-        uses: actions/download-artifact@v6
-        with:
-          name: ${{ inputs.rust_ext_artifact }}
-          path: python/sglang/srt/
+          path: |
+            python/sglang/srt/server/_core*.so
+            python/sglang/srt/grpc/_core*.so
+            python/sglang/srt/multimodal/_core*.so
+          key: ${{ inputs.rust_ext_cache_key }}
+          fail-on-cache-miss: true
 
       - name: Install dependencies
         timeout-minutes: ${{ fromJson(steps.rc.outputs.install_timeout) }}
         env:
           GRACE_BLACKWELL: ${{ steps.rc.outputs.grace_blackwell || '0' }}
           # Empty is treated as unset by setup.py, i.e. build everything, which
-          # is what stages without an artifact (aarch64) need.
-          SGLANG_BUILD_RUST_EXTS: ${{ inputs.rust_ext_artifact != '' && 'none' || '' }}
+          # is what stages without prebuilt modules (aarch64) need.
+          SGLANG_BUILD_RUST_EXTS: ${{ inputs.rust_ext_cache_key != '' && 'none' || '' }}
         run: |
           CUSTOM_BUILD_SGL_KERNEL=${{ fromJson(inputs.check_changes).sgl_kernel }} bash ${{ steps.rc.outputs.install }}
 

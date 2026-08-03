@@ -210,11 +210,11 @@ jobs:
 
   # =============================================== Rust extensions ====================================================
 
-  # Compile the PyO3 extension modules once and hand them to the CUDA stages as
-  # an artifact. Unlike sgl-kernel this is not gated on the sources changing:
-  # the extensions ship inside the sglang wheel and have no published build to
-  # fall back on, so every run needs a fresh one. Stages fall back to compiling
-  # during install whenever this job did not succeed.
+  # Make the PyO3 extension modules available to the CUDA stages so none of them
+  # compiles the cargo workspace during install. The job runs every time but
+  # only actually compiles when the hash of rust/ + setup.py misses its cache,
+  # so a PR that leaves those alone reuses what main already built. Stages fall
+  # back to compiling during install whenever this job did not succeed.
   rust-ext-build:
     needs: [check-changes, call-gate]
     # Skip for scheduled runs (they run stages independently).
@@ -284,7 +284,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '10'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-a-test-cpu:
@@ -390,7 +390,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   # Runs on H100 (80GB, SM90) - tests that don't pass on 5090 (FA3, FP8, high VRAM, etc.)
@@ -406,7 +406,7 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-b-test-2-gpu-large:
@@ -420,7 +420,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-b-test-4-gpu-b200:
@@ -434,7 +434,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '40'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   call-multimodal-gen-tests:
@@ -468,7 +468,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-8-gpu-h200:
@@ -489,7 +489,7 @@ jobs:
       # Server CUDA Graph warmup is combined into this step (warmup_server_models unset).
       warmup_deep_gemm_models: 'deepseek-ai/DeepSeek-V3-0324:8 deepseek-ai/DeepSeek-V3.2:8 zai-org/GLM-5-FP8:8 XiaomiMiMo/MiMo-V2-Flash:4 XiaomiMiMo/MiMo-V2.5:8'
       warmup_timeout_minutes: '60'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-8-gpu-h20:
@@ -503,7 +503,7 @@ jobs:
       caller_inputs: ${{ toJson(inputs) }}
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-deepep-4-gpu-h100:
@@ -519,7 +519,7 @@ jobs:
       run_timeout_minutes: '30'
       warmup_deep_gemm_models: 'lmsys/sglang-ci-dsv3-test:4'
       warmup_server_models: 'lmsys/sglang-ci-dsv3-test:4'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-deepep-4-gpu-b200:
@@ -534,7 +534,7 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-deepep-8-gpu-h200:
@@ -549,7 +549,7 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-4-gpu-b200:
@@ -564,7 +564,7 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
-      rust_ext_artifact: ${{ needs.rust-ext-build.result == 'success' && 'rust-ext-x86_64' || '' }}
+      rust_ext_cache_key: ${{ needs.rust-ext-build.outputs.cache_key }}
     secrets: inherit
 
   base-c-test-4-gpu-gb300:
@@ -579,9 +579,9 @@ jobs:
       partitions: ${{ needs.check-changes.outputs.partitions }}
       run_timeout_minutes: '30'
       timeout_per_file: '1800'
-      # aarch64: no prebuilt artifact, so this stage still compiles the
-      # extensions during install.
-      rust_ext_artifact: ''
+      # aarch64: nothing is prebuilt for this arch, so this stage still compiles
+      # the extensions during install.
+      rust_ext_cache_key: ''
     secrets: inherit
 
   pr-test-finish:

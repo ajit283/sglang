@@ -1,9 +1,8 @@
 name: PR Test - Build Rust Extensions
 
-# Reusable workflow that compiles the PyO3 extension modules from the rust/
-# cargo workspace once per run and publishes them as an artifact, so the CUDA
-# test stages can install sglang with SGLANG_BUILD_RUST_EXTS=none instead of
-# each one rebuilding the whole workspace.
+# Reusable workflow that makes the PyO3 extension modules from the rust/ cargo
+# workspace available to the CUDA test stages, so each of them can install
+# sglang with SGLANG_BUILD_RUST_EXTS=none instead of rebuilding the workspace.
 #
 # Why this exists: uv holds the editable sdist lock in the shared ~/.cache/uv
 # for the entire build, cargo included, and every CUDA job builds the same path
@@ -11,19 +10,24 @@ name: PR Test - Build Rust Extensions
 # jobs sharing a host serialized on that lock and the ones at the back of the
 # queue hit uv's lock timeout and failed.
 #
-# Unlike sgl-kernel, these extensions have no published wheel to fall back on
-# (they ship inside the sglang wheel), so this job runs on every CI run rather
-# than only when rust/ changed.
+# The modules are keyed by a hash of their own sources, which is what makes
+# "rebuild only when rust/ changed" work without a version number to bump: a run
+# restores caches from its own branch and from the default branch, so a PR that
+# leaves rust/ alone hits the entry main already populated. sgl-kernel solves
+# the same problem with a pinned published version, but it has to, because it
+# ships to users as its own wheel; these modules ship inside the sglang wheel
+# and are only ever consumed by CI, so a content hash is both simpler and
+# stricter (it cannot silently drift the way a stale pin can).
 
 on:
   workflow_call:
     inputs:
       runs_on:
-        description: 'Runner label. Must be self-hosted: the artifact is consumed by jammy test runners, so glibc must be no newer than theirs, and a persistent ~/.cache is what lets the cargo build cache survive between runs.'
+        description: 'Runner label. Must be self-hosted: the modules are consumed by jammy test runners, so glibc must be no newer than theirs, and a persistent ~/.cache is what lets the cargo build cache survive between runs.'
         type: string
         required: true
-      artifact_name:
-        description: 'upload-artifact name. Test stages download by this exact name.'
+      cache_prefix:
+        description: 'Cache key prefix. Encodes the target arch, since the modules are not portable across architectures.'
         type: string
         default: rust-ext-x86_64
       max_glibc:
@@ -37,6 +41,10 @@ on:
         description: 'Forwarded from the caller so the check-maintenance action sees the same env as other jobs.'
         type: boolean
         default: false
+    outputs:
+      cache_key:
+        description: 'Cache key holding the built modules. Test stages restore by this exact key; empty when this workflow did not run, which makes them fall back to compiling during install.'
+        value: ${{ jobs.build.outputs.cache_key }}
 
 # Reusable workflows do not inherit the caller's workflow-level env, so mirror
 # what the check-maintenance action reads.
@@ -50,6 +58,8 @@ jobs:
     runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 60
     name: Build Rust Ext
+    outputs:
+      cache_key: ${{ steps.key.outputs.value }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,17 +67,44 @@ jobs:
 
       - uses: ./.github/actions/check-maintenance
 
+      # Published as a job output so the test stages restore the exact same key
+      # instead of recomputing the expression, which would drift the moment one
+      # side's file list is edited and degrade to a silent cache miss.
+      #
+      # setup.py is in the hash because it decides which crates are built.
+      # rust-toolchain.toml is covered by rust/**. python/pyproject.toml is
+      # deliberately excluded: it changes constantly for dependency bumps that
+      # cannot affect these modules. If a CUDA pyproject ever gains a
+      # [tool.sglang] rust-extensions allowlist, add it here.
+      - name: Compute cache key
+        id: key
+        run: |
+          echo "value=${{ inputs.cache_prefix }}-${{ hashFiles('rust/**', 'python/setup.py') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore or seed built modules
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            python/sglang/srt/server/_core*.so
+            python/sglang/srt/grpc/_core*.so
+            python/sglang/srt/multimodal/_core*.so
+          key: ${{ steps.key.outputs.value }}
+
       # Only the extension ABI tag has to match the test runners, so pin the
       # same minor version they run rather than whatever the image ships.
       - name: Set up Python 3.10
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install protoc and Rust toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
         run: bash scripts/ci/utils/install_rust_protoc.sh
 
       - name: Build extension modules
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
           export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:${PATH}"
@@ -85,28 +122,23 @@ jobs:
           cd python
           SGLANG_BUILD_RUST_EXTS=all python setup.py build_rust --inplace
 
-      - name: Stage artifacts and verify glibc floor
+      # Runs on cache hits too, so a truncated or wrongly-built cache entry is
+      # caught here rather than as an unrelated-looking import error in a test.
+      - name: Verify modules and glibc floor
         run: |
           set -euo pipefail
           shopt -s nullglob
-          # Copy into a fixed layout instead of uploading the source paths
-          # directly: upload-artifact strips the longest common prefix of what
-          # it matched, so a missing crate would silently change the archive
-          # layout and unpack the .so files to the wrong place.
-          rm -rf rust-ext-staging
+          built=()
           for pkg in server grpc multimodal; do
               found=(python/sglang/srt/"${pkg}"/_core*.so)
               if [ ${#found[@]} -ne 1 ]; then
-                  echo "::error::expected exactly one built extension for ${pkg}, found ${#found[@]}"
+                  echo "::error::expected exactly one extension module for ${pkg}, found ${#found[@]}"
                   exit 1
               fi
-              mkdir -p "rust-ext-staging/${pkg}"
-              cp "${found[0]}" "rust-ext-staging/${pkg}/"
+              built+=("${found[0]}")
           done
-          built=(rust-ext-staging/*/_core*.so)
           # A .so built against a newer glibc than the test runners fails at
-          # import with "GLIBC_2.xx not found", which would surface as an
-          # unrelated-looking test error. Catch it here instead.
+          # import with "GLIBC_2.xx not found".
           max_allowed="${{ inputs.max_glibc }}"
           status=0
           for so in "${built[@]}"; do
@@ -122,13 +154,3 @@ jobs:
               fi
           done
           exit $status
-
-      - name: Upload extension modules
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact_name }}
-          # Archive holds <pkg>/_core*.so, so it unpacks straight into
-          # python/sglang/srt/ on the consuming stage.
-          path: rust-ext-staging/
-          if-no-files-found: error
-          retention-days: 1
