@@ -87,11 +87,9 @@ class ForwardInputBuffers:
         return share_input_buffer(name, new_buffer)
 
     def reset_index_buffers(self) -> None:
-        """Zero the index-semantic buffers this set declares."""
-        for f in fields(self):
-            if f.name not in _INDEX_SEMANTIC_BUFFERS:
-                continue
-            buffer = getattr(self, f.name)
+        """Zero the _INDEX_SEMANTIC_BUFFERS this set actually carries."""
+        for name in _INDEX_SEMANTIC_BUFFERS:
+            buffer = getattr(self, name, None)
             if buffer is not None:
                 buffer.zero_()
 

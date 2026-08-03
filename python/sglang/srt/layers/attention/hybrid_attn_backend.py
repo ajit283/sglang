@@ -36,10 +36,9 @@ class HybridAttnBackend(AttentionBackend):
         self.spec_attn_is_prefill = (
             model_runner.server_args.speculative_attention_mode == "prefill"
         )
-        # Gates the FutureMap's per-step seq_lens D2H (decide_needs_cpu_seq_lens
-        # ORs it across backends). Count only what runs in the spec decode loop:
-        # decode always, prefill only when mode=prefill routes verify to it --
-        # else a cpu-lens prefill backend forces the D2H on steps it never serves.
+        # Gates the FutureMap's per-step seq_lens D2H. Count only backends the
+        # spec decode loop runs: decode always, prefill only when mode=prefill
+        # routes verify to it.
         self.needs_cpu_seq_lens = decode_backend.needs_cpu_seq_lens or (
             self.spec_attn_is_prefill and prefill_backend.needs_cpu_seq_lens
         )
@@ -117,12 +116,10 @@ class HybridAttnBackend(AttentionBackend):
     def init_mha_chunk_metadata(
         self, forward_batch: ForwardBatch, disable_flashinfer_ragged: bool = False
     ):
-        # Chunked-prefix / one-shot MHA metadata is a prefill concern. Without
-        # this delegation the MLA MHA path silently skips (re)planning its
-        # ragged wrappers when the full-attn backend is this prefill/decode
-        # split (e.g. --decode-attention-backend trtllm_mla), and any
-        # prefix-cache-hit extend batch then runs against a stale plan:
-        #   ValueError: q.shape[0] (...) does not match qo_indptr[-1] (...)
+        # Mirrors HybridLinearAttnBackend: the wrapper resolves as the attn
+        # backend, so without this the MLA MHA path never replans its ragged
+        # wrappers and a prefix-cache-hit extend hits a stale plan --
+        # "q.shape[0] does not match qo_indptr[-1]".
         init = getattr(self.prefill_backend, "init_mha_chunk_metadata", None)
         if init is not None:
             init(forward_batch, disable_flashinfer_ragged)
